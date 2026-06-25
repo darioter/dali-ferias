@@ -373,7 +373,7 @@ table.lt tr:hover td{background:rgba(200,168,75,.03);}
 // CONFIG SUPABASE
 // ══════════════════════════════════════
 const SURL = 'https://wmhhkksmomrfzxmblzwx.supabase.co';
-const SKEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndtaGhra3Ntb21yZnp4bWJsend4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MTM5MTUwNTUsImV4cCI6MjAyOTQ5MTA1NX0.5vbOJhk2SrM9Q0pXBjULtJB2JGBBiDR1mLF5E0C5_FI';
+const SKEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndtaGhra3Ntb21yZnp4bWJsend4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MTc5MTEsImV4cCI6MjA5NzE5MzkxMX0.bvavn2RwK21Y5m0KmfDqeB4TWPUYN0CMs4bt8p54EmY';
 const sb = supabase.createClient(SURL, SKEY);
 
 // ══════════════════════════════════════
@@ -752,7 +752,7 @@ Para cada empresa devolvé exactamente este JSON (sin texto extra, sin markdown,
 Devolvé entre 6 y 10 empresas. Mezcla los 3 tipos. Solo JSON puro, nada más.`;
 
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const res = await fetch('/api/claude', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
