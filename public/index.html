@@ -721,35 +721,12 @@ async function buscarPotenciales() {
   document.getElementById('p-pot-content').innerHTML =
     `<div class="ia-loading"><span class="spinner"></span>Buscando participantes anteriores y potenciales para <b>${f.evento}</b>...</div>`;
 
-  const prompt = `Sos un consultor comercial especializado en ferias y exposiciones argentinas. 
-Tu tarea es identificar empresas que podrían contratar un stand en la feria: "${f.evento}".
+  const prompt = `Sos un consultor de stands para ferias en Argentina. Dame empresas potenciales para la feria "${f.evento}" (rubro: ${f.rubro} / ${f.subrubro}, recinto: ${f.recinto || 'Buenos Aires'}).
 
-Datos de la feria:
-- Rubro: ${f.rubro} / ${f.subrubro}
-- Recinto: ${f.recinto || 'Buenos Aires'}
-- Organizador: ${f.org || 'desconocido'}
-- Nivel de importancia: ${f.nivel}
+IMPORTANTE: Responde UNICAMENTE con un array JSON valido, sin texto antes ni despues, sin markdown, sin explicaciones. Exactamente este formato:
+[{"nombre":"Empresa SA","tipo":"real","rubro":"climatizacion","por_que":"Fabricante lider que exhibe en todas las ferias del sector","web":"empresa.com.ar","email":""},{"nombre":"Otra SRL","tipo":"ia","rubro":"construccion","por_que":"Empresa constructora que se beneficiaria de contactos en este evento","web":"","email":""}]
 
-Necesito 3 tipos de empresas:
-1. TIPO "real": empresas que típicamente participan como expositoras en esta clase de feria en Argentina (por historial conocido o lógica de mercado)
-2. TIPO "web": empresas que según tu conocimiento tienen presencia activa en este sector y buscarían visibilidad en ferias
-3. TIPO "ia": empresas no obvias pero que podrían beneficiarse de participar (clientes potenciales no habituales del sector)
-
-Para cada empresa devolvé exactamente este JSON (sin texto extra, sin markdown, sin explicaciones):
-{
-  "potenciales": [
-    {
-      "nombre": "Nombre de la empresa",
-      "tipo": "real|web|ia",
-      "rubro": "rubro específico",
-      "por_que": "razón concisa en 1 frase de por qué participaría",
-      "web": "sitio web sin https si lo conocés, sino vacío",
-      "email": "email de contacto si lo conocés, sino vacío"
-    }
-  ]
-}
-
-Devolvé entre 6 y 10 empresas. Mezcla los 3 tipos. Solo JSON puro, nada más.`;
+Dame 6 empresas mezclando tipos: real (participante historico), web (activa en el sector), ia (potencial no obvio). Solo el array JSON.`;
 
   try {
     const res = await fetch('/api/claude', {
@@ -763,28 +740,17 @@ Devolvé entre 6 y 10 empresas. Mezcla los 3 tipos. Solo JSON puro, nada más.`;
     });
     const data = await res.json();
     const text = data.content?.[0]?.text || '';
-    // Limpiar posibles backticks o prefijos
-    // Extraer JSON robusto — buscar el primer { y último }
     let clean = text.replace(/```json|```/g, '').trim();
-    // Encontrar el JSON entre llaves
-    const jsonStart = clean.indexOf('{');
-    const jsonEnd = clean.lastIndexOf('}');
-    if (jsonStart !== -1 && jsonEnd !== -1) {
-      clean = clean.slice(jsonStart, jsonEnd + 1);
+    const arrStart = clean.indexOf('[');
+    const arrEnd = clean.lastIndexOf(']');
+    const objStart = clean.indexOf('{');
+    const objEnd = clean.lastIndexOf('}');
+    let pots = [];
+    if (arrStart !== -1 && arrEnd !== -1 && (objStart === -1 || arrStart < objStart)) {
+      pots = JSON.parse(clean.slice(arrStart, arrEnd + 1));
+    } else if (objStart !== -1 && objEnd !== -1) {
+      pots = (JSON.parse(clean.slice(objStart, objEnd + 1))).potenciales || [];
     }
-    let parsed;
-    try {
-      parsed = JSON.parse(clean);
-    } catch(parseErr) {
-      const arrStart = clean.indexOf('[');
-      const arrEnd = clean.lastIndexOf(']');
-      if (arrStart !== -1 && arrEnd !== -1) {
-        parsed = { potenciales: JSON.parse(clean.slice(arrStart, arrEnd + 1)) };
-      } else {
-        throw parseErr;
-      }
-    }
-    const pots = parsed.potenciales || [];
 
     // Guardar en cache
     potencialesCache[key] = pots;
