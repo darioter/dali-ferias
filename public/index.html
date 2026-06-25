@@ -719,22 +719,31 @@ async function buscarPotenciales() {
   const key = f.evento;
 
   document.getElementById('p-pot-content').innerHTML =
-    `<div class="ia-loading"><span class="spinner"></span>Buscando participantes anteriores y potenciales para <b>${f.evento}</b>...</div>`;
+    `<div class="ia-loading"><span class="spinner"></span>Buscando 20 clientes potenciales para <b>${f.evento}</b>... (2 búsquedas)</div>`;
+  document.getElementById('p-pot-count').textContent = '...';
 
-  const prompt = `Sos un consultor de stands para ferias en Argentina. Dame empresas potenciales para la feria "${f.evento}" (rubro: ${f.rubro} / ${f.subrubro}, recinto: ${f.recinto || 'Buenos Aires'}).
+  function makePrompt(batch) {
+    const instrucciones = batch === 1
+      ? `participantes historicos conocidos (tipo "real") y empresas lideres del sector (tipo "web")`
+      : `empresas medianas del sector, proveedores, distribuidores y empresas de rubros complementarios que se beneficiarian de participar (tipo "ia" y "web")`;
+    return `Sos un consultor de stands para ferias en Argentina. Feria: "${f.evento}" (rubro: ${f.rubro} / ${f.subrubro}, recinto: ${f.recinto || 'Buenos Aires'}).
 
-IMPORTANTE: Responde UNICAMENTE con un array JSON valido, sin texto antes ni despues, sin markdown, sin explicaciones. Exactamente este formato:
-[{"nombre":"Empresa SA","tipo":"real","rubro":"climatizacion","por_que":"Fabricante lider que exhibe en todas las ferias del sector","web":"empresa.com.ar","email":""},{"nombre":"Otra SRL","tipo":"ia","rubro":"construccion","por_que":"Empresa constructora que se beneficiaria de contactos en este evento","web":"","email":""}]
+Dame 10 empresas argentinas distintas enfocado en: ${instrucciones}.
+${batch === 2 ? `Evita repetir estas empresas ya encontradas: ${(potencialesCache[key]||[]).map(p=>p.nombre).join(', ')}` : ''}
 
-Dame 6 empresas mezclando tipos: real (participante historico), web (activa en el sector), ia (potencial no obvio). Solo el array JSON.`;
+RESPONDE UNICAMENTE con un array JSON, sin texto, sin markdown:
+[{"nombre":"Empresa SA","tipo":"real","rubro":"rubro especifico","por_que":"razon breve de 1 frase","web":"sitio.com.ar","email":"contacto@empresa.com"}]
 
-  try {
+10 empresas. Solo el array JSON.`;
+  }
+
+  async function callIA(prompt) {
     const res = await fetch('/api/claude', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'claude-sonnet-4-6',
-        max_tokens: 1000,
+        max_tokens: 2000,
         messages: [{ role: 'user', content: prompt }]
       })
     });
@@ -745,20 +754,37 @@ Dame 6 empresas mezclando tipos: real (participante historico), web (activa en e
     const arrEnd = clean.lastIndexOf(']');
     const objStart = clean.indexOf('{');
     const objEnd = clean.lastIndexOf('}');
-    let pots = [];
     if (arrStart !== -1 && arrEnd !== -1 && (objStart === -1 || arrStart < objStart)) {
-      pots = JSON.parse(clean.slice(arrStart, arrEnd + 1));
+      return JSON.parse(clean.slice(arrStart, arrEnd + 1));
     } else if (objStart !== -1 && objEnd !== -1) {
-      pots = (JSON.parse(clean.slice(objStart, objEnd + 1))).potenciales || [];
+      return (JSON.parse(clean.slice(objStart, objEnd + 1))).potenciales || [];
     }
+    return [];
+  }
 
-    // Guardar en cache
-    potencialesCache[key] = pots;
+  try {
+    // Búsqueda 1
+    const pots1 = await callIA(makePrompt(1));
+    potencialesCache[key] = pots1;
+    localStorage.setItem('dali_pot', JSON.stringify(potencialesCache));
+    document.getElementById('p-pot-count').textContent = pots1.length + '...';
+    document.getElementById('p-pot-content').innerHTML =
+      `<div class="ia-loading"><span class="spinner"></span>Primera tanda lista (${pots1.length}). Buscando más...</div>`;
+
+    // Búsqueda 2
+    const pots2 = await callIA(makePrompt(2));
+    
+    // Combinar y deduplicar por nombre
+    const nombres = new Set(pots1.map(p => p.nombre.toLowerCase()));
+    const potsNuevos = pots2.filter(p => !nombres.has(p.nombre.toLowerCase()));
+    const potsTotal = [...pots1, ...potsNuevos];
+
+    potencialesCache[key] = potsTotal;
     localStorage.setItem('dali_pot', JSON.stringify(potencialesCache));
 
-    document.getElementById('p-pot-count').textContent = pots.length;
+    document.getElementById('p-pot-count').textContent = potsTotal.length;
     renderPanelPotenciales();
-    showToast(`${pots.length} potenciales encontrados ✓`, 'ok');
+    showToast(`${potsTotal.length} potenciales encontrados ✓`, 'ok');
   } catch(e) {
     document.getElementById('p-pot-content').innerHTML =
       `<div class="ia-error">Error al consultar la IA. Verificá la conexión e intentá nuevamente.<br><small>${e.message}</small></div>`;
