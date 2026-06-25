@@ -764,8 +764,26 @@ Devolvé entre 6 y 10 empresas. Mezcla los 3 tipos. Solo JSON puro, nada más.`;
     const data = await res.json();
     const text = data.content?.[0]?.text || '';
     // Limpiar posibles backticks o prefijos
-    const clean = text.replace(/```json|```/g, '').trim();
-    const parsed = JSON.parse(clean);
+    // Extraer JSON robusto — buscar el primer { y último }
+    let clean = text.replace(/```json|```/g, '').trim();
+    // Encontrar el JSON entre llaves
+    const jsonStart = clean.indexOf('{');
+    const jsonEnd = clean.lastIndexOf('}');
+    if (jsonStart !== -1 && jsonEnd !== -1) {
+      clean = clean.slice(jsonStart, jsonEnd + 1);
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(clean);
+    } catch(parseErr) {
+      const arrStart = clean.indexOf('[');
+      const arrEnd = clean.lastIndexOf(']');
+      if (arrStart !== -1 && arrEnd !== -1) {
+        parsed = { potenciales: JSON.parse(clean.slice(arrStart, arrEnd + 1)) };
+      } else {
+        throw parseErr;
+      }
+    }
     const pots = parsed.potenciales || [];
 
     // Guardar en cache
