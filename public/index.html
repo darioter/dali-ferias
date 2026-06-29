@@ -717,39 +717,20 @@ async function buscarPotenciales() {
   if (!currentFeria) return;
   const f = currentFeria;
   const key = f.evento;
+  const orgWeb = (orgData[f.evento]?.web || f.org_web || '').replace('https://','').replace('http://','');
 
-  document.getElementById('p-pot-content').innerHTML =
-    `<div class="ia-loading"><span class="spinner"></span>Buscando 20 clientes potenciales para <b>${f.evento}</b>... (2 búsquedas)</div>`;
-  document.getElementById('p-pot-count').textContent = '...';
+  const steps = [
+    { label: '🔍 Buscando participantes reales en la web...', emoji: '🔍' },
+    { label: '🧠 Analizando y completando con IA...', emoji: '🧠' },
+  ];
 
-  function makePrompt(batch) {
-    const instrucciones = batch === 1
-      ? `participantes historicos conocidos (tipo "real") y empresas lideres del sector (tipo "web")`
-      : `empresas medianas del sector, proveedores, distribuidores y empresas de rubros complementarios que se beneficiarian de participar (tipo "ia" y "web")`;
-    return `Sos un consultor de stands para ferias en Argentina. Feria: "${f.evento}" (rubro: ${f.rubro} / ${f.subrubro}, recinto: ${f.recinto || 'Buenos Aires'}).
-
-Dame 10 empresas argentinas distintas enfocado en: ${instrucciones}.
-${batch === 2 ? `Evita repetir estas empresas ya encontradas: ${(potencialesCache[key]||[]).map(p=>p.nombre).join(', ')}` : ''}
-
-RESPONDE UNICAMENTE con un array JSON, sin texto, sin markdown:
-[{"nombre":"Empresa SA","tipo":"real","rubro":"rubro especifico","por_que":"razon breve de 1 frase","web":"sitio.com.ar","email":"contacto@empresa.com"}]
-
-10 empresas. Solo el array JSON.`;
+  function showStep(i, extra='') {
+    document.getElementById('p-pot-content').innerHTML =
+      `<div class="ia-loading"><span class="spinner"></span>${steps[i].label} ${extra}</div>`;
   }
 
-  async function callIA(prompt) {
-    const res = await fetch('/api/claude', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 2000,
-        messages: [{ role: 'user', content: prompt }]
-      })
-    });
-    const data = await res.json();
-    const text = data.content?.[0]?.text || '';
-    let clean = text.replace(/```json|```/g, '').trim();
+  function parseIA(text) {
+    let clean = text.replace(/\`\`\`json|\`\`\`/g, '').trim();
     const arrStart = clean.indexOf('[');
     const arrEnd = clean.lastIndexOf(']');
     const objStart = clean.indexOf('{');
@@ -762,29 +743,79 @@ RESPONDE UNICAMENTE con un array JSON, sin texto, sin markdown:
     return [];
   }
 
-  try {
-    // Búsqueda 1
-    const pots1 = await callIA(makePrompt(1));
-    potencialesCache[key] = pots1;
-    localStorage.setItem('dali_pot', JSON.stringify(potencialesCache));
-    document.getElementById('p-pot-count').textContent = pots1.length + '...';
-    document.getElementById('p-pot-content').innerHTML =
-      `<div class="ia-loading"><span class="spinner"></span>Primera tanda lista (${pots1.length}). Buscando más...</div>`;
+  async function callIA(prompt, useWebSearch) {
+    const body = {
+      model: 'claude-sonnet-4-6',
+      max_tokens: 3000,
+      messages: [{ role: 'user', content: prompt }]
+    };
+    if (useWebSearch) body.use_web_search = true;
+    const res = await fetch('/api/claude', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    // Extraer texto de todos los bloques (web search devuelve múltiples bloques)
+    const textBlocks = (data.content || [])
+      .filter(b => b.type === 'text')
+      .map(b => b.text)
+      .join('\n');
+    return textBlocks;
+  }
 
-    // Búsqueda 2
-    const pots2 = await callIA(makePrompt(2));
-    
-    // Combinar y deduplicar por nombre
-    const nombres = new Set(pots1.map(p => p.nombre.toLowerCase()));
-    const potsNuevos = pots2.filter(p => !nombres.has(p.nombre.toLowerCase()));
-    const potsTotal = [...pots1, ...potsNuevos];
+  try {
+    // ── PASO 1: Búsqueda web real de participantes anteriores ──
+    showStep(0);
+    document.getElementById('p-pot-count').textContent = '...';
+
+    const promptWeb = `Buscá en la web quiénes fueron los expositores o participantes de la feria "${f.evento}" en Argentina en ediciones anteriores (2022, 2023, 2024 o 2025).
+${orgWeb ? `El sitio oficial de la feria es: ${orgWeb}` : ''}
+Buscá también en Google: "${f.evento} expositores" y "${f.evento} participantes".
+
+Con los resultados encontrados, devolvé SOLO un array JSON con las empresas que realmente participaron:
+[{"nombre":"Empresa SA","tipo":"real","rubro":"rubro","por_que":"Expositora confirmada en edicion anterior","web":"sitio.com.ar","email":""}]
+
+Si no encontrás participantes reales, devolvé un array vacío: []
+Solo el array JSON, sin texto adicional.`;
+
+    const textWeb = await callIA(promptWeb, true);
+    let potsReales = [];
+    try { potsReales = parseIA(textWeb); } catch(e) { potsReales = []; }
+
+    showStep(1, `(${potsReales.length} reales encontrados)`);
+
+    // ── PASO 2: IA completa con potenciales del sector ──
+    const nombresReales = potsReales.map(p => p.nombre).join(', ');
+    const promptIA = `Sos consultor de stands para ferias en Argentina. Feria: "${f.evento}" (rubro: ${f.rubro} / ${f.subrubro}).
+${nombresReales ? `Ya tenemos estos expositores reales confirmados: ${nombresReales}. NO los repitas.` : ''}
+
+Dame 15 empresas argentinas adicionales que deberían participar en esta feria pero NO están en la lista anterior. Incluí:
+- Empresas líderes del sector que probablemente participan pero no encontramos datos (tipo "web")  
+- Proveedores, distribuidores y empresas de rubros complementarios (tipo "ia")
+- Competidores directos de las empresas ya confirmadas (tipo "ia")
+
+SOLO array JSON:
+[{"nombre":"Empresa SA","tipo":"web","rubro":"rubro especifico","por_que":"razon de 1 frase","web":"sitio.com.ar","email":""}]
+
+15 empresas distintas. Solo el array JSON.`;
+
+    const textIA = await callIA(promptIA, false);
+    let potsSector = [];
+    try { potsSector = parseIA(textIA); } catch(e) { potsSector = []; }
+
+    // Combinar: reales primero, luego sector, deduplicar
+    const nombresSet = new Set(potsReales.map(p => p.nombre.toLowerCase()));
+    const potsExtra = potsSector.filter(p => !nombresSet.has(p.nombre.toLowerCase()));
+    const potsTotal = [...potsReales, ...potsExtra];
 
     potencialesCache[key] = potsTotal;
     localStorage.setItem('dali_pot', JSON.stringify(potencialesCache));
 
     document.getElementById('p-pot-count').textContent = potsTotal.length;
     renderPanelPotenciales();
-    showToast(`${potsTotal.length} potenciales encontrados ✓`, 'ok');
+    showToast(`${potsTotal.length} potenciales encontrados (${potsReales.length} reales + ${potsExtra.length} sugeridos) ✓`, 'ok');
+
   } catch(e) {
     document.getElementById('p-pot-content').innerHTML =
       `<div class="ia-error">Error al consultar la IA. Verificá la conexión e intentá nuevamente.<br><small>${e.message}</small></div>`;
